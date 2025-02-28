@@ -1,40 +1,28 @@
-import os
+import asyncio
 import google.generativeai as genai
-import chainlit as cl
+from fastapi import HTTPException
+import os
+from dotenv import load_dotenv
 
-GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
-genai.configure(api_key=GOOGLE_API_KEY)
-print("Connected to Gemini!", GOOGLE_API_KEY)
+load_dotenv()
 
-settings = {
-    "model": "gemini-2.0-flash",
-    "temperature": 0.7,
-    "max_output_tokens": 500,
-}
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 
-@cl.on_chat_start
-async def on_chat_start():
-    cl.user_session.set(
-        "message_history",
-        [{"role": "system", "content": "You are a helpful assistant."}],
-    )
-    await cl.Message(content="Connected to Chainlit!").send()
+async def generate_llm_response(messages: list[dict[str, str]], model: str = "gemini-2.0-flash"):
+    if not GOOGLE_API_KEY:
+        raise HTTPException(status_code=500, detail="Google API key not configured")
+    
+    try:
+        genai_model = genai.GenerativeModel(model)
+        history = [{"role": msg["role"], "parts": [msg["message"]]} for msg in messages[:-1]]
+        chat = genai_model.start_chat(history=history)
 
-@cl.on_message
-async def on_message(message: cl.Message):
-    message_history = cl.user_session.get("message_history")
-    message_history.append({"role": "user", "content": message.content})
+        response = await asyncio.to_thread(
+            chat.send_message,
+            messages[-1]["message"],
+            generation_config={"temperature": 0.7, "max_output_tokens": 800}
+        )
 
-    msg = cl.Message(content="")
-    await msg.send()
-
-    model = genai.GenerativeModel(settings["model"])
-    convo = model.start_chat(history=[])
-
-    response = convo.send_message(message.content)
-
-    async for part in response:
-        await msg.stream_token(part.text)
-
-    message_history.append({"role": "assistant", "content": msg.content})
-    await msg.update()
+        return response.text
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating response: {str(e)}")
