@@ -1,0 +1,7 @@
+fastapi
+starlette
+chainlit
+google-generativeai
+python-dotenv
+starlette
+websockets
