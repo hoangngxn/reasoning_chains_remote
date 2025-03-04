@@ -1,0 +1,18 @@
+cd backend
+.\venv\Scripts\activate
+uvicorn app:app --reload
+chainlit run app.py
+
+
+const socket = io("http://localhost:8000/chainlit/ws", {
+  extraHeaders: {
+    Authorization: `Bearer ${localStorage.getItem("token")}`, // Truyền token JWT vào header
+  },
+});
+
+socket.send(
+  JSON.stringify({
+    message: "Hello again!",
+    metadata: { conversation_id: "65f0d39bde5f6b8a2e7b4f01" }, // ID của conversation
+  })
+);

@@ -1,150 +1,152 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-from datetime import datetime
-from dotenv import load_dotenv
-import asyncio
+from fastapi import FastAPI, Request, HTTPException, WebSocket
+from starlette.middleware.cors import CORSMiddleware
+from chainlit.utils import mount_chainlit
+from db import users_collection, hash_password, verify_password
+from services.auth import generate_jwt, register_user
+from pydantic import BaseModel
+from fastapi.responses import RedirectResponse
 import os
-import uvicorn
+from services.auth import verify_jwt
+from db import users_collection, conversations_collection
 
-from cl_app import generate_llm_response
-from db import conversation_collection, chat_history_collection
-from models import Conversation, ConversationCreate, ChatMessage, MessageRequest
 
-load_dotenv()
+app = FastAPI()
 
-# Constants
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 
-# FastAPI startup and shutdown
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    if GOOGLE_API_KEY:
-        import google.generativeai as genai
-        genai.configure(api_key=GOOGLE_API_KEY)
-        print("Initialized Google Generative AI provider")
-    
-    await conversation_collection.create_index("id", unique=True)
-    await chat_history_collection.create_index("conversation_id")
-    
-    yield
-    print("Shutting down LLM backend")
-
-# Initialize FastAPI app
-app = FastAPI(lifespan=lifespan)
-
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Routes for conversation management
-@app.post("/conversations", response_model=Conversation)
-async def create_conversation(conversation: ConversationCreate):
-    new_conversation = Conversation(title=conversation.title)
-    await conversation_collection.insert_one(new_conversation.dict())
-    return new_conversation
+@app.get("/")
+async def root():
+    print("🚀 API GET chạy rồi")
+    return {"message": "Hello Bro, API đang chạy ngon lành"}
 
-@app.get("/conversations", response_model=list[Conversation])
-async def list_conversations():
-    conversations = await conversation_collection.find().sort("updated_at", -1).to_list(100)
-    return [Conversation(**conv) for conv in conversations]
+class LoginUser(BaseModel):
+    email: str
+    password: str
 
-@app.get("/conversations/{conversation_id}", response_model=Conversation)
-async def get_conversation(conversation_id: str):
-    conversation = await conversation_collection.find_one({"id": conversation_id})
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    return Conversation(**conversation)
+class RegisterUser(BaseModel):
+    username: str
+    password: str
+    email: str
+        
+@app.post("/login")
+async def login(user: LoginUser):
+    print("vao day")
+    db_user = users_collection.find_one({"email": user.email})
 
-@app.delete("/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str):
-    result = await conversation_collection.delete_one({"id": conversation_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    await chat_history_collection.delete_many({"conversation_id": conversation_id})
-    return {"message": "Conversation and associated messages deleted"}
+    if not db_user:
+        raise HTTPException(status_code=400, detail="Invalid credentials")
 
-@app.get("/conversations/{conversation_id}/messages", response_model=list[ChatMessage])
-async def get_conversation_messages(conversation_id: str):
-    conversation = await conversation_collection.find_one({"id": conversation_id})
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+    if verify_password(user.password, db_user["password"]):
+        token = generate_jwt(str(db_user["_id"]))  # Chuyển ObjectId thành string
+        return {"token": token}
+        
+    raise HTTPException(status_code=400, detail="Invalid credentials")
 
-    messages = await chat_history_collection.find({"conversation_id": conversation_id}).sort("created_at", 1).to_list(1000)
-    return [ChatMessage(**msg) for msg in messages]
+@app.post("/register")
+async def register(user: RegisterUser):
+    if not register_user(user.email, user.password, user.username):
+        raise HTTPException(status_code=400, detail="User already exists")
+    return {"message": "User registered successfully"}
 
-# Routes for message handling
-@app.post("/messages", response_model=ChatMessage)
-async def send_message(message_request: MessageRequest):
-    conversation_id = message_request.conversation_id
-    if not conversation_id:
-        new_conversation = await create_conversation(ConversationCreate())
-        conversation_id = new_conversation.id
-    else:
-        conversation = await conversation_collection.find_one({"id": conversation_id})
-        if not conversation:
-            raise HTTPException(status_code=404, detail="Conversation not found")
+@app.get("/auth/google")
+async def google_login():
+    return RedirectResponse(
+        f"https://accounts.google.com/o/oauth2/v2/auth?client_id={GOOGLE_CLIENT_ID}&redirect_uri=http://localhost:8000/auth/google/callback&response_type=code&scope=openid%20email%20profile"
+    )
 
-    user_message = ChatMessage(conversation_id=conversation_id, role="user", message=message_request.message)
-    await chat_history_collection.insert_one(user_message.dict())
-
-    message_history = await chat_history_collection.find({"conversation_id": conversation_id}).sort("created_at", 1).to_list(1000)
-    formatted_messages = [{"role": msg["role"], "message": msg["message"]} for msg in message_history]
-
-    assistant_response = await generate_llm_response(formatted_messages, model=message_request.model)
-
-    assistant_message = ChatMessage(conversation_id=conversation_id, role="assistant", message=assistant_response)
-    await chat_history_collection.insert_one(assistant_message.dict())
-
-    await conversation_collection.update_one({"id": conversation_id}, {"$set": {"updated_at": datetime.utcnow()}})
-    return assistant_message
-
-# WebSocket endpoint
-@app.websocket("/ws/{conversation_id}")
-async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
-    await websocket.accept()
-    
+@app.get("/auth/google/callback")
+async def google_callback(code: str):
     try:
-        conversation = await conversation_collection.find_one({"id": conversation_id})
-        if not conversation:
-            new_conversation = Conversation(id=conversation_id, title="New Conversation")
-            await conversation_collection.insert_one(new_conversation.dict())
+        import requests
 
-        while True:
-            data = await websocket.receive_json()
-            if "message" not in data:
-                await websocket.send_json({"error": "Message is required"})
-                continue
-            
-            user_message = data["message"]
-            model = data.get("model", "gemini-2.0-flash")
+        # Lấy access_token từ authorization code
+        token_url = "https://oauth2.googleapis.com/token"
+        payload = {
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "code": code,
+            "redirect_uri": "http://localhost:8000/auth/google/callback",
+            "grant_type": "authorization_code"
+        }
+        
+        response = requests.post(token_url, data=payload)
+        token_data = response.json()
+        print(token_data)
+        if "access_token" not in token_data:
+            return {"error": "Invalid token"}
 
-            chat_message = ChatMessage(conversation_id=conversation_id, role="user", message=user_message)
-            await chat_history_collection.insert_one(chat_message.dict())
+        access_token = token_data["access_token"]
 
-            message_history = await chat_history_collection.find({"conversation_id": conversation_id}).sort("created_at", 1).to_list(1000)
-            formatted_messages = [{"role": msg["role"], "message": msg["message"]} for msg in message_history]
+        # Lấy thông tin user từ Google
+        user_info_url = "https://www.googleapis.com/oauth2/v3/userinfo"
+        user_info_response = requests.get(user_info_url, headers={"Authorization": f"Bearer {access_token}"})
+        user_info = user_info_response.json()
 
-            try:
-                response = await generate_llm_response(formatted_messages, model)
-                assistant_message = ChatMessage(conversation_id=conversation_id, role="assistant", message=response)
-                await chat_history_collection.insert_one(assistant_message.dict())
+        email = user_info.get("email")
+        name = user_info.get("name", "")
+        picture = user_info.get("picture", "")
+        sub = user_info.get("sub")
 
-                await conversation_collection.update_one({"id": conversation_id}, {"$set": {"updated_at": datetime.utcnow()}})
+        if not email:
+            return {"error": "Unauthorized"}
 
-                await websocket.send_json({"type": "message", "data": assistant_message.dict()})
-            except Exception as e:
-                await websocket.send_json({"type": "error", "data": {"error": str(e)}})
-    except WebSocketDisconnect:
-        print(f"Client disconnected from conversation {conversation_id}")
+        # Kiểm tra xem user đã tồn tại trong DB hay chưa
+        db_user = users_collection.find_one({"email": email})
+        if db_user:
+            user_id = str(db_user["_id"])
+        else:
+            new_user = {
+                "email": email,
+                "username": name,
+                "picture": picture,
+                "sub": sub
+            }
+            result = users_collection.insert_one(new_user)
+            user_id = str(result.inserted_id)
+        jwt_token = generate_jwt(str(user_id))
+        return {"token": jwt_token}
+
     except Exception as e:
-        print(f"WebSocket error: {str(e)}")
+        return {"error": str(e)}
 
-if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+@app.get("/conversations")
+async def get_conversations(request: Request):
+    tk = request.headers.get("Authorization")
+    token = tk.split(" ")[1]
+    print(token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+
+    try:
+        user_id = verify_jwt(token)
+        print("uid", user_id)
+        conversations = list(conversations_collection.find({"user_id": user_id}))
+        elements = []
+        for convo in conversations:
+            messages = convo.get("messages", [])
+            if len(messages) > 0:
+                first_message = messages[0].get("text", "")
+                words = first_message.split()
+                short_content = " ".join(words[:6]) if words else "No Msg"
+            else:
+                short_content = "No Msg"
+
+            elements.append({
+                "id_conv": str(convo['_id']),
+                "content": short_content
+            })
+        return elements    
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+
+mount_chainlit(app=app, target="cl_app.py", path="/chainlit")

@@ -1,8 +1,17 @@
+from pymongo import MongoClient
 import os
-import motor.motor_asyncio
+import bcrypt
 
-MONGODB_URL = os.environ.get("MONGODB_URL", "mongodb://localhost:27017")
-client = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URL)
-db = client.llm_chat_app
-conversation_collection = db.conversations
-chat_history_collection = db.chat_history
+MONGO_URI = os.getenv("MONGO_URI")
+client = MongoClient(MONGO_URI)
+db = client["chatbot_db"]
+users_collection = db["users"]
+conversations_collection = db["conversations"]
+messages_collection = db["messages"]
+
+def hash_password(password):
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode("utf-8"), salt)
+
+def verify_password(password, hashed):
+    return bcrypt.checkpw(password.encode("utf-8"), hashed)

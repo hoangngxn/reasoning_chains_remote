@@ -1,28 +1,121 @@
-import asyncio
-import google.generativeai as genai
-from fastapi import HTTPException
 import os
-from dotenv import load_dotenv
+import google.generativeai as genai
+from services.auth import verify_jwt
+import chainlit as cl
+from db import users_collection, conversations_collection
+from bson import ObjectId
+import bcrypt
+from typing import Dict, Optional
+import jwt
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+genai.configure(api_key=GOOGLE_API_KEY)
 
-load_dotenv()
 
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+settings = {
+    "model": "gemini-2.0-flash",
+    "temperature": 0.7,
+    "max_output_tokens": 500,
+}
 
-async def generate_llm_response(messages: list[dict[str, str]], model: str = "gemini-2.0-flash"):
-    if not GOOGLE_API_KEY:
-        raise HTTPException(status_code=500, detail="Google API key not configured")
+model = genai.GenerativeModel(settings["model"])
+
+# commet để test chainlit
+# @cl.oauth_callback
+# def oauth_callback(provider_id: str, token: str, raw_user_data: Dict[str, str], default_user: cl.User) -> Optional[cl.User]:
+#     if provider_id == "google":
+#         print("Google Login Success")
+#         print(raw_user_data)
+#         default_user.metadata["email"] = raw_user_data["email"]
+#         return default_user
+#     else:
+#         return None
+
+# @cl.header_auth_callback
+# def header_auth_callback(headers: Dict) -> Optional[cl.User]:
+#     token = headers.get("Authorization").split(" ")[1]
+
+#     try:
+#         user_id = verify_jwt(token)
+#         user = users_collection.find_one({"_id": ObjectId(user_id)})
+#         if user:
+#             return cl.User(identifier=user["email"], metadata={"user_id": str(user["_id"]), "role": "user"})
+#     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, KeyError):
+#         return None
+
+#     return None
+
+
+
+# Hàm xác thực người dùng
+@cl.password_auth_callback
+async def verify_user(email: str, password: str):
+    user = users_collection.find_one({"email": email})
+    if user and bcrypt.checkpw(password.encode(), user["password"]):
+        return cl.User(identifier=email, metadata={"user_id": str(user["_id"])})
+    return None
+
+@cl.on_chat_start
+async def on_chat_start():
+    user = cl.user_session.get("user")
+    if not user:
+        await cl.Message(content="You must log in to start chatting!").send()
+        return
     
-    try:
-        genai_model = genai.GenerativeModel(model)
-        history = [{"role": msg["role"], "parts": [msg["message"]]} for msg in messages[:-1]]
-        chat = genai_model.start_chat(history=history)
+    cl.user_session.set("message_history", [])
+    await cl.Message(content="Welcome! How can I assist you today?").send()
 
-        response = await asyncio.to_thread(
-            chat.send_message,
-            messages[-1]["message"],
-            generation_config={"temperature": 0.7, "max_output_tokens": 800}
-        )
+@cl.on_message
+async def on_message(message: cl.Message):
+    selected_conversation_id = message.metadata.get("conversation_id")
+    current_conversation_id = cl.user_session.get("conversation_id")
+    message_history = cl.user_session.get("message_history")
 
-        return response.text
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating response: {str(e)}")
+    # Nếu người dùng chọn cuộc trò chuyện khác thì load lại lịch sử
+    if selected_conversation_id and selected_conversation_id != current_conversation_id:
+        cl.user_session.set("conversation_id", selected_conversation_id)
+        existing_conversation = conversations_collection.find_one({"_id": ObjectId(selected_conversation_id)})
+        if existing_conversation:
+            message_history = existing_conversation["messages"]
+            cl.user_session.set("message_history", message_history)
+        else:
+            message_history = []
+            cl.user_session.set("message_history", message_history)
+
+    if not cl.user_session.get("conversation_id"):
+        conversation = {"user_id": cl.user_session.get("user").metadata["user_id"], "messages": []}
+        conversation_id = str(conversations_collection.insert_one(conversation).inserted_id)
+        cl.user_session.set("conversation_id", conversation_id)
+        message_history = []
+        cl.user_session.set("message_history", message_history)
+
+    # Chuyển message thành đúng format của Gemini
+    user_message = {
+        "role": "user",
+        "parts": [{"text": message.content}]
+    }
+    message_history.append(user_message)
+
+    # Start Gemini Chat
+    convo = model.start_chat(history=message_history)
+    response = convo.send_message(message.content)
+
+    # Gửi tin nhắn về giao diện
+    msg = cl.Message(content=response.text)
+    await msg.send()
+
+    assistant_message = {
+        "role": "assistant",
+        "parts": [{"text": response.text}]
+    }
+    message_history.append(assistant_message)
+
+    conversations_collection.update_one(
+        {"_id": ObjectId(cl.user_session.get("conversation_id"))},
+        {"$push": {"messages": user_message}}
+    )
+
+    conversations_collection.update_one(
+        {"_id": ObjectId(cl.user_session.get("conversation_id"))},
+        {"$push": {"messages": assistant_message}}
+    )
+
