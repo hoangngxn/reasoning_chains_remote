@@ -7,6 +7,8 @@ from bson import ObjectId
 import bcrypt
 from typing import Dict, Optional
 import jwt
+from config import INSTRUCTION_PROMPT
+
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 genai.configure(api_key=GOOGLE_API_KEY)
 
@@ -88,16 +90,21 @@ async def on_message(message: cl.Message):
         message_history = []
         cl.user_session.set("message_history", message_history)
 
-    # Chuyển message thành đúng format của Gemini
-    user_message = {
+    # Original user message for storage
+    original_user_message = {
         "role": "user",
         "parts": [{"text": message.content}]
     }
-    message_history.append(user_message)
+    
+    # Add instruction prompt to user message for LLM
+    prompted_message_content = f"{INSTRUCTION_PROMPT}\n{message.content}"
+    
+    # Store the original message in history
+    message_history.append(original_user_message)
 
-    # Start Gemini Chat
+    # Start Gemini Chat but send the prompted message
     convo = model.start_chat(history=message_history)
-    response = convo.send_message(message.content)
+    response = convo.send_message(prompted_message_content)
 
     # Gửi tin nhắn về giao diện
     msg = cl.Message(content=response.text)
@@ -111,11 +118,10 @@ async def on_message(message: cl.Message):
 
     conversations_collection.update_one(
         {"_id": ObjectId(cl.user_session.get("conversation_id"))},
-        {"$push": {"messages": user_message}}
+        {"$push": {"messages": original_user_message}}
     )
 
     conversations_collection.update_one(
         {"_id": ObjectId(cl.user_session.get("conversation_id"))},
         {"$push": {"messages": assistant_message}}
     )
-
