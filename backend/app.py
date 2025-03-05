@@ -25,8 +25,8 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    print("🚀 API GET chạy rồi")
-    return {"message": "Hello Bro, API đang chạy ngon lành"}
+    print("🚀 API GET Running...")
+    return {"message": "API is running..."}
 
 class LoginUser(BaseModel):
     email: str
@@ -39,14 +39,13 @@ class RegisterUser(BaseModel):
         
 @app.post("/login")
 async def login(user: LoginUser):
-    print("vao day")
     db_user = users_collection.find_one({"email": user.email})
 
     if not db_user:
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
     if verify_password(user.password, db_user["password"]):
-        token = generate_jwt(str(db_user["_id"]))  # Chuyển ObjectId thành string
+        token = generate_jwt(str(db_user["_id"]))
         return {"token": token}
         
     raise HTTPException(status_code=400, detail="Invalid credentials")
@@ -66,9 +65,7 @@ async def google_login():
 @app.get("/auth/google/callback")
 async def google_callback(code: str):
     try:
-        import requests
-
-        # Lấy access_token từ authorization code
+        import requests       
         token_url = "https://oauth2.googleapis.com/token"
         payload = {
             "client_id": GOOGLE_CLIENT_ID,
@@ -86,7 +83,6 @@ async def google_callback(code: str):
 
         access_token = token_data["access_token"]
 
-        # Lấy thông tin user từ Google
         user_info_url = "https://www.googleapis.com/oauth2/v3/userinfo"
         user_info_response = requests.get(user_info_url, headers={"Authorization": f"Bearer {access_token}"})
         user_info = user_info_response.json()
@@ -99,7 +95,6 @@ async def google_callback(code: str):
         if not email:
             return {"error": "Unauthorized"}
 
-        # Kiểm tra xem user đã tồn tại trong DB hay chưa
         db_user = users_collection.find_one({"email": email})
         if db_user:
             user_id = str(db_user["_id"])

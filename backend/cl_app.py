@@ -21,7 +21,7 @@ settings = {
 
 model = genai.GenerativeModel(settings["model"])
 
-# commet để test chainlit
+# Testing chainlit
 # @cl.oauth_callback
 # def oauth_callback(provider_id: str, token: str, raw_user_data: Dict[str, str], default_user: cl.User) -> Optional[cl.User]:
 #     if provider_id == "google":
@@ -48,7 +48,7 @@ model = genai.GenerativeModel(settings["model"])
 
 
 
-# Hàm xác thực người dùng
+# User authentication
 @cl.password_auth_callback
 async def verify_user(email: str, password: str):
     user = users_collection.find_one({"email": email})
@@ -72,7 +72,7 @@ async def on_message(message: cl.Message):
     current_conversation_id = cl.user_session.get("conversation_id")
     message_history = cl.user_session.get("message_history")
 
-    # Nếu người dùng chọn cuộc trò chuyện khác thì load lại lịch sử
+    # If user create another conversation
     if selected_conversation_id and selected_conversation_id != current_conversation_id:
         cl.user_session.set("conversation_id", selected_conversation_id)
         existing_conversation = conversations_collection.find_one({"_id": ObjectId(selected_conversation_id)})
@@ -106,7 +106,7 @@ async def on_message(message: cl.Message):
     convo = model.start_chat(history=message_history)
     response = convo.send_message(prompted_message_content)
 
-    # Gửi tin nhắn về giao diện
+    # Sending message to the front
     msg = cl.Message(content=response.text)
     await msg.send()
 
