@@ -1,0 +1,10 @@
+[server]
+host = "0.0.0.0"
+port = 8001
+cors = true
+
+[cors]
+allowed_origins = ["*"]
+allowed_methods = ["*"]
+allowed_headers = ["*"]
+allow_credentials = true

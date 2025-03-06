@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 import os
 from services.auth import verify_jwt
 from db import users_collection, conversations_collection
+from bson import ObjectId
 
 
 app = FastAPI()
@@ -18,7 +19,7 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -113,6 +114,32 @@ async def google_callback(code: str):
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/info")
+async def get_info_user(request: Request):
+    tk = request.headers.get("Authorization")
+    token = tk.split(" ")[1]
+    print(token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+
+    try:
+        user_id = verify_jwt(token)
+        print("User ID:", user_id)
+        user = users_collection.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        user_info = {
+            "id": str(user["_id"]),
+            "email": user.get("email", ""),
+            "username": user.get("username", ""),
+            "picture": user.get("picture", ""),
+        }
+        return user_info
+        
+    except Exception as e:
+        print("Error:", str(e))
+        raise HTTPException(status_code=401, detail=str(e))
+
 @app.get("/conversations")
 async def get_conversations(request: Request):
     tk = request.headers.get("Authorization")
@@ -143,5 +170,18 @@ async def get_conversations(request: Request):
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
 
-
+@app.get("/history/{conv_id}")
+async def get_history(conv_id: str, request: Request):
+    tk = request.headers.get("Authorization")
+    token = tk.split(" ")[1]
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    try:
+        user_id = verify_jwt(token)
+        conversation = conversations_collection.find_one({"_id": ObjectId(conv_id), "user_id": user_id})
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return conversation.get("messages", [])
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=str(e))
 mount_chainlit(app=app, target="cl_app.py", path="/chainlit")

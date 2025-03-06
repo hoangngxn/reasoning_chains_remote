@@ -5,3 +5,6 @@ google-generativeai
 python-dotenv
 starlette
 websockets
+pymongo
+bcrypt
+jwt

@@ -8,7 +8,7 @@ import bcrypt
 from typing import Dict, Optional
 import jwt
 from config import INSTRUCTION_PROMPT
-
+import json
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 genai.configure(api_key=GOOGLE_API_KEY)
 
@@ -18,7 +18,7 @@ settings = {
     "temperature": 0.7,
     "max_output_tokens": 500,
 }
-
+newchat = False
 model = genai.GenerativeModel(settings["model"])
 
 # Testing chainlit
@@ -48,17 +48,43 @@ model = genai.GenerativeModel(settings["model"])
 
 
 
-# User authentication
-@cl.password_auth_callback
-async def verify_user(email: str, password: str):
-    user = users_collection.find_one({"email": email})
-    if user and bcrypt.checkpw(password.encode(), user["password"]):
-        return cl.User(identifier=email, metadata={"user_id": str(user["_id"])})
-    return None
-
+# Hàm xác thực người dùng
+# @cl.password_auth_callback
+# async def verify_user(email: str, password: str):
+#     user = users_collection.find_one({"email": email})
+#     if user and bcrypt.checkpw(password.encode(), user["password"]):
+#         return cl.User(identifier=email, metadata={"user_id": str(user["_id"])})
+#     return None
+from chainlit.config import config
+origins = [ 
+    "http://localhost:5173", 
+    "http://192.168.90.161:5173" 
+] 
+config.cors = {
+    "allow_origins": origins,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+    "allow_credentials": True
+}
 @cl.on_chat_start
 async def on_chat_start():
-    user = cl.user_session.get("user")
+    user_env = cl.user_session.get("env")
+    if isinstance(user_env, str):
+        user_env = json.loads(user_env)
+
+    token = user_env["Authorization"].replace("Bearer ", "")
+    try:
+        user_id = verify_jwt(token)
+        user = users_collection.find_one({"_id": ObjectId(user_id)})
+        if user:
+            print(user)
+            current_user = cl.User(identifier=user["email"], metadata={"user_id": str(user["_id"]), "role": "user"})
+            cl.user_session.set("identifier", current_user.identifier)
+            cl.user_session.set("metadata", current_user.metadata)
+            cl.context.session.user = current_user
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, KeyError):
+        return None
+    
     if not user:
         await cl.Message(content="You must log in to start chatting!").send()
         return
@@ -89,7 +115,7 @@ async def on_message(message: cl.Message):
         cl.user_session.set("conversation_id", conversation_id)
         message_history = []
         cl.user_session.set("message_history", message_history)
-
+        
     # Original user message for storage
     original_user_message = {
         "role": "user",
@@ -108,6 +134,8 @@ async def on_message(message: cl.Message):
 
     # Sending message to the front
     msg = cl.Message(content=response.text)
+
+    msg.metadata = {"conversation_id": str(message.metadata.get("conversation_id"))}    
     await msg.send()
 
     assistant_message = {
