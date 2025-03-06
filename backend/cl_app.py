@@ -4,8 +4,6 @@ from services.auth import verify_jwt
 import chainlit as cl
 from db import users_collection, conversations_collection
 from bson import ObjectId
-import bcrypt
-from typing import Dict, Optional
 import jwt
 from config import INSTRUCTION_PROMPT
 import json
@@ -21,40 +19,6 @@ settings = {
 newchat = False
 model = genai.GenerativeModel(settings["model"])
 
-# Testing chainlit
-# @cl.oauth_callback
-# def oauth_callback(provider_id: str, token: str, raw_user_data: Dict[str, str], default_user: cl.User) -> Optional[cl.User]:
-#     if provider_id == "google":
-#         print("Google Login Success")
-#         print(raw_user_data)
-#         default_user.metadata["email"] = raw_user_data["email"]
-#         return default_user
-#     else:
-#         return None
-
-# @cl.header_auth_callback
-# def header_auth_callback(headers: Dict) -> Optional[cl.User]:
-#     token = headers.get("Authorization").split(" ")[1]
-
-#     try:
-#         user_id = verify_jwt(token)
-#         user = users_collection.find_one({"_id": ObjectId(user_id)})
-#         if user:
-#             return cl.User(identifier=user["email"], metadata={"user_id": str(user["_id"]), "role": "user"})
-#     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, KeyError):
-#         return None
-
-#     return None
-
-
-
-# Hàm xác thực người dùng
-# @cl.password_auth_callback
-# async def verify_user(email: str, password: str):
-#     user = users_collection.find_one({"email": email})
-#     if user and bcrypt.checkpw(password.encode(), user["password"]):
-#         return cl.User(identifier=email, metadata={"user_id": str(user["_id"])})
-#     return None
 from chainlit.config import config
 origins = [ 
     "http://localhost:5173", 
