@@ -4,21 +4,12 @@ from services.auth import verify_jwt
 import chainlit as cl
 from db import users_collection, conversations_collection
 from bson import ObjectId
+import bcrypt
+from typing import Dict, Optional
 import jwt
 from config import INSTRUCTION_PROMPT
 import json
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-genai.configure(api_key=GOOGLE_API_KEY)
-
-
-settings = {
-    "model": "gemini-2.0-flash",
-    "temperature": 0.7,
-    "max_output_tokens": 500,
-}
-newchat = False
-model = genai.GenerativeModel(settings["model"])
-
+from datetime import datetime
 from chainlit.config import config
 origins = [ 
     "http://localhost:5173", 
@@ -30,6 +21,18 @@ config.cors = {
     "allow_headers": ["*"],
     "allow_credentials": True
 }
+
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+genai.configure(api_key=GOOGLE_API_KEY)
+
+settings = {
+    "model": "gemini-2.0-flash",
+    "temperature": 0.7,
+    "max_output_tokens": 500,
+}
+newchat = False
+model = genai.GenerativeModel(settings["model"])
+
 @cl.on_chat_start
 async def on_chat_start():
     user_env = cl.user_session.get("env")
@@ -74,16 +77,18 @@ async def on_message(message: cl.Message):
             cl.user_session.set("message_history", message_history)
 
     if not cl.user_session.get("conversation_id"):
+        print("abc: ",cl.user_session.get("user").metadata["user_id"])
         conversation = {"user_id": cl.user_session.get("user").metadata["user_id"], "messages": []}
         conversation_id = str(conversations_collection.insert_one(conversation).inserted_id)
         cl.user_session.set("conversation_id", conversation_id)
         message_history = []
         cl.user_session.set("message_history", message_history)
-        
+    current_time = datetime.now().isoformat()
     # Original user message for storage
     original_user_message = {
         "role": "user",
-        "parts": [{"text": message.content}]
+        "text": message.content,
+        "timestamp": current_time 
     }
     
     # Add instruction prompt to user message for LLM
@@ -99,12 +104,13 @@ async def on_message(message: cl.Message):
     # Sending message to the front
     msg = cl.Message(content=response.text)
 
-    msg.metadata = {"conversation_id": str(message.metadata.get("conversation_id"))}    
+    msg.metadata = {"conversation_id": str(cl.user_session.get("conversation_id"))}    
     await msg.send()
 
     assistant_message = {
         "role": "assistant",
-        "parts": [{"text": response.text}]
+        "text": message.content,
+        "timestamp": current_time 
     }
     message_history.append(assistant_message)
 

@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException, WebSocket
 from starlette.middleware.cors import CORSMiddleware
 from chainlit.utils import mount_chainlit
-from db import users_collection, hash_password, verify_password
+from db import users_collection, verify_password
 from services.auth import generate_jwt, register_user
 from pydantic import BaseModel
 from fastapi.responses import RedirectResponse
@@ -72,7 +72,7 @@ async def google_callback(code: str):
             "client_id": GOOGLE_CLIENT_ID,
             "client_secret": GOOGLE_CLIENT_SECRET,
             "code": code,
-            "redirect_uri": "http://localhost:8000/auth/google/callback",
+            "redirect_uri": "http://192.168.91.105:8000/auth/google/callback",
             "grant_type": "authorization_code"
         }
         
@@ -109,8 +109,7 @@ async def google_callback(code: str):
             result = users_collection.insert_one(new_user)
             user_id = str(result.inserted_id)
         jwt_token = generate_jwt(str(user_id))
-        return {"token": jwt_token}
-
+        return RedirectResponse(f"http://192.168.90.161:3000/oauth2/redirect?token=" + jwt_token + "&userId=" + user_id)
     except Exception as e:
         return {"error": str(e)}
 
