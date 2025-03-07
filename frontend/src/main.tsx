@@ -3,21 +3,24 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.tsx";
 import { RecoilRoot } from "recoil";
+import { AppProvider } from "./context/AppContext.tsx";
 import "./index.css";
 import { ChainlitAPI, ChainlitContext } from "@chainlit/react-client";
 
-const CHAINLIT_SERVER = "http://localhost:80/chainlit";
+const CHAINLIT_SERVER = "ws://localhost:8000/chainlit";
 
 const apiClient = new ChainlitAPI(CHAINLIT_SERVER, "webapp");
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <ChainlitContext.Provider value={apiClient}>
-      <RecoilRoot>
+  // <React.StrictMode>
+  <ChainlitContext.Provider value={apiClient}>
+    <RecoilRoot>
+      <AppProvider>
         <BrowserRouter>
           <App />
         </BrowserRouter>
-      </RecoilRoot>
-    </ChainlitContext.Provider>
-  </React.StrictMode>
+      </AppProvider>
+    </RecoilRoot>
+  </ChainlitContext.Provider>
+  // </React.StrictMode>
 );

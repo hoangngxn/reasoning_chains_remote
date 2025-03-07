@@ -8,21 +8,33 @@ import googleIcon from "./../assets/img/google-icon.png";
 import moonIcon from "./../assets/img/moon.svg";
 import sunIcon from "./../assets/img/sun.svg";
 import logoutIcon from "./../assets/img/logout.svg";
-
+import { useChatSession } from "@chainlit/react-client";
+import { useNavigate } from "react-router-dom";
+import { useApp } from "@/context/AppContext";
 interface HeaderProps {
   isSidebarOpen: boolean;
   setIsSidebarOpen: (open: boolean) => void;
 }
 
 const Header: React.FC<HeaderProps> = ({ isSidebarOpen, setIsSidebarOpen }) => {
+  const navigate = useNavigate();
+  const { user, setUserInfor } = useApp();
   const [isOpen, setIsOpen] = useState(false);
   const [isDark, setIsDark] = useState(
     localStorage.getItem("theme") === "dark"
   );
+  const { disconnect } = useChatSession();
 
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    setUserInfor({ token: "", email: "", isAuthenticated: false });
+    disconnect();
+    navigate("/login");
+  };
   useEffect(() => {
     const root = document.documentElement;
     root.classList.add("transition-colors", "duration-2");
+
     if (isDark) {
       document.documentElement.classList.add("dark");
       localStorage.setItem("theme", "dark");
@@ -63,7 +75,6 @@ const Header: React.FC<HeaderProps> = ({ isSidebarOpen, setIsSidebarOpen }) => {
         </div>
       </div>
 
-      {/* Icons */}
       <div className="flex gap-5 items-center">
         {/* Toggle Light/Dark Mode */}
         <div
@@ -85,17 +96,22 @@ const Header: React.FC<HeaderProps> = ({ isSidebarOpen, setIsSidebarOpen }) => {
           <img src={googleIcon} alt="Google" className="w-full h-full" />
           {isOpen && (
             <div className="absolute right-0 mt-2 w-55 bg-white dark:bg-gray-800 shadow-lg rounded-md text-gray-700 dark:text-gray-200 z-50">
-              <div className="p-3">
+              <div className="p-3 flex flex-col justify-center items-center">
                 <img className="w-12 h-12" src={googleIcon} alt="" />
-                <span className="text-sm mt-2">nguyenvana@gmail.com</span>
+                <span className="text-sm mt-2">{user?.email}</span>
               </div>
-              <div className="p-3 flex border-t dark:border-gray-700">
+              <div className="p-3 flex justify-center border-t dark:border-gray-700">
                 <img
                   className="opacity-70 dark:invert mr-2"
                   src={logoutIcon}
                   alt=""
                 />
-                <button className="dark:hover:text-red-400">Đăng xuất</button>
+                <button
+                  className="dark:hover:text-red-400"
+                  onClick={handleLogout}
+                >
+                  Đăng xuất
+                </button>
               </div>
             </div>
           )}
